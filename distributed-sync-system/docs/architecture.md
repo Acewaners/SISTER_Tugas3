@@ -7,17 +7,51 @@ Sistem ini berjalan sebagai kluster node peer-to-peer, di mana setiap node menja
 
 ```mermaid
 graph TD
-    Client1[Client] --> |Request TCP| Node1[Node 1 : 8001]
-    Client2[Client] --> |Request TCP| Node2[Node 2 : 8002]
-    
-    subgraph Kluster Terdistribusi
-        Node1 <-->|Heartbeats / TCP| Node2
-        Node2 <-->|Heartbeats / TCP| Node3[Node 3 : 8003]
-        Node3 <-->|Heartbeats / TCP| Node1
+    subgraph External_Layer [Client Interface]
+        Client((Client Application))
     end
-```
 
----
+    subgraph Cluster_Network [Docker Overlay Network]
+        direction TB
+        
+        subgraph Node_N [Distributed Node Instance]
+            direction TB
+            Base[Base Node API]
+            
+            subgraph Services [Synchronization Services]
+                LM[Lock Manager]
+                QN[Queue Node]
+                CN[Cache Node]
+            end
+            
+            subgraph Consensus_Layer [Consistency Engine]
+                Raft[Raft Consensus]
+                State[(State Machine)]
+            end
+            
+            subgraph Network_Layer [Communication Layer]
+                MP[Message Passing]
+                FD[Failure Detector]
+            end
+        end
+    end
+
+    Client -->|HTTP/JSON| Base
+    Base --> Services
+    
+    LM <--> Raft
+    QN <--> Raft
+    CN <--> FD
+    
+    Raft <--> State
+    Raft <--> MP
+    FD <--> MP
+    
+    MP <==>|Internal RPC / TCP| Peer_Nodes[...]
+
+    style Node_N fill:#fdfdfd,stroke:#333,stroke-width:2px
+    style Services fill:#fff3e0,stroke:#f57c00
+    style Consensus_Layer fill:#e1f5fe,stroke:#0288d1
 
 ## 2. Komponen Utama
 
