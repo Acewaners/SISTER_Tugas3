@@ -1,3 +1,3 @@
-from .raft import RaftNode, RaftState, Message, MessageType
+from .raft import RaftNode, RaftState, MessageType, LogEntry
 
-__all__ = ['RaftNode', 'RaftState', 'Message', 'MessageType']
+__all__ = ['RaftNode', 'RaftState', 'MessageType', 'LogEntry']

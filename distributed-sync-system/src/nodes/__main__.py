@@ -1,6 +1,7 @@
 import asyncio
 import argparse
 import os
+import json
 
 from src.utils.config import config
 from src.consensus.raft import RaftNode, RaftState
@@ -51,10 +52,23 @@ class NodeServer:
 
     async def _handle_request(self, reader, writer):
         try:
+            addr = writer.get_extra_info('peername')
+            print(f"[NET] Connection from {addr}")
             data = await reader.read(8192)
             if data:
-                import json
                 request = json.loads(data.decode())
+                msg_type = request.get("type", "")
+
+                print(f"[NET] Received from {addr}: type={msg_type}, sender={request.get('sender', 'N/A')}, sender_id={request.get('sender_id', 'N/A')}")
+
+                # Handle Raft messages (type-based)
+                if msg_type in ["request_vote", "vote_response", "heartbeat", "append_entries"]:
+                    await self.raft.handle_message(request)
+                    writer.write(json.dumps({"raft_ok": True}).encode())
+                    await writer.drain()
+                    return
+
+                # Handle normal actions
                 response = await self.process_request(request)
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
@@ -70,6 +84,13 @@ class NodeServer:
     async def process_request(self, request: dict) -> dict:
         action = request.get("action")
         print(f"Processing request: {action}")
+
+        # Handle Raft messages
+        if "type" in request:
+            msg_type = request.get("type")
+            if msg_type in ["request_vote", "vote_response", "heartbeat", "append_entries"]:
+                await self.raft.handle_message(request)
+                return {"raft_response": True, "state": self.raft.get_state()}
 
         if action == "lock_acquire":
             resource = request.get("resource", "")
