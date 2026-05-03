@@ -1,21 +1,21 @@
 openapi: 3.0.0
 info:
-  title: Distributed Synchronization System API
+  title: API Sistem Sinkronisasi Terdistribusi
+  description: Spesifikasi API untuk Endpoint TCP JSON Sistem Sinkronisasi Terdistribusi.
   version: 1.0.0
-  description: API for distributed lock, queue, and cache management
 
 servers:
-  - url: http://localhost:8001
+  - url: tcp://localhost:8001
     description: Node 1
-  - url: http://localhost:8002
+  - url: tcp://localhost:8002
     description: Node 2
-  - url: http://localhost:8003
+  - url: tcp://localhost:8003
     description: Node 3
 
 paths:
-  /lock/acquire:
+  /lock_acquire:
     post:
-      summary: Acquire a distributed lock
+      summary: Meminta Akses Kunci (Acquire Distributed Lock)
       requestBody:
         required: true
         content:
@@ -23,23 +23,21 @@ paths:
             schema:
               type: object
               properties:
+                action:
+                  type: string
+                  example: "lock_acquire"
                 resource:
                   type: string
-                  description: Resource identifier to lock
+                  example: "file_A"
                 lock_type:
                   type: string
                   enum: [SHARED, EXCLUSIVE]
-                  default: EXCLUSIVE
                 client_id:
                   type: string
-                  description: Client identifier
-                timeout:
-                  type: integer
-                  default: 30
-                  description: Timeout in seconds
+                  example: "user_1"
       responses:
-        "200":
-          description: Lock acquired successfully
+        '200':
+          description: Hasil percobaan mendapatkan kunci (Lock)
           content:
             application/json:
               schema:
@@ -47,14 +45,10 @@ paths:
                 properties:
                   success:
                     type: boolean
-                  request_id:
-                    type: string
-                  resource:
-                    type: string
 
-  /lock/release:
+  /lock_release:
     post:
-      summary: Release a distributed lock
+      summary: Melepas Akses Kunci (Release Distributed Lock)
       requestBody:
         required: true
         content:
@@ -62,13 +56,18 @@ paths:
             schema:
               type: object
               properties:
+                action:
+                  type: string
+                  example: "lock_release"
                 resource:
                   type: string
+                  example: "file_A"
                 client_id:
                   type: string
+                  example: "user_1"
       responses:
-        "200":
-          description: Lock released
+        '200':
+          description: Hasil percobaan melepas kunci
           content:
             application/json:
               schema:
@@ -77,35 +76,9 @@ paths:
                   success:
                     type: boolean
 
-  /lock/status:
-    get:
-      summary: Get lock status
-      parameters:
-        - name: resource
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Lock status
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  resource:
-                    type: string
-                  locked:
-                    type: boolean
-                  lock_type:
-                    type: string
-                  holder:
-                    type: string
-
-  /queue/enqueue:
+  /queue_enqueue:
     post:
-      summary: Enqueue a message
+      summary: Menambahkan Pesan ke Antrean (Enqueue)
       requestBody:
         required: true
         content:
@@ -113,15 +86,21 @@ paths:
             schema:
               type: object
               properties:
+                action:
+                  type: string
+                  example: "queue_enqueue"
                 topic:
                   type: string
+                  example: "orders"
                 payload:
                   type: string
+                  example: "order_data_123"
                 producer_id:
                   type: string
+                  example: "prod_1"
       responses:
-        "200":
-          description: Message enqueued
+        '200':
+          description: Hasil Enqueue
           content:
             application/json:
               schema:
@@ -131,12 +110,10 @@ paths:
                     type: boolean
                   msg_id:
                     type: string
-                  partition:
-                    type: string
 
-  /queue/dequeue:
+  /queue_dequeue:
     post:
-      summary: Dequeue a message
+      summary: Mengambil Pesan dari Antrean (Dequeue)
       requestBody:
         required: true
         content:
@@ -144,16 +121,18 @@ paths:
             schema:
               type: object
               properties:
+                action:
+                  type: string
+                  example: "queue_dequeue"
                 topic:
                   type: string
+                  example: "orders"
                 consumer_id:
                   type: string
-                timeout:
-                  type: integer
-                  default: 30
+                  example: "cons_1"
       responses:
-        "200":
-          description: Message dequeued
+        '200':
+          description: Pesan yang berhasil diambil
           content:
             application/json:
               schema:
@@ -163,12 +142,10 @@ paths:
                     type: string
                   payload:
                     type: string
-                  timestamp:
-                    type: number
 
-  /queue/ack:
+  /get_status:
     post:
-      summary: Acknowledge message processing
+      summary: Mengambil status node kluster
       requestBody:
         required: true
         content:
@@ -176,81 +153,12 @@ paths:
             schema:
               type: object
               properties:
-                msg_id:
+                action:
                   type: string
-                consumer_id:
-                  type: string
+                  example: "get_status"
       responses:
-        "200":
-          description: Message acknowledged
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-
-  /cache/read:
-    post:
-      summary: Read from cache
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                address:
-                  type: integer
-                requestor_id:
-                  type: string
-      responses:
-        "200":
-          description: Cache read result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  address:
-                    type: integer
-                  data:
-                    type: string
-
-  /cache/write:
-    post:
-      summary: Write to cache
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                address:
-                  type: integer
-                data:
-                  type: string
-                writer_id:
-                  type: string
-      responses:
-        "200":
-          description: Cache write result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-
-  /status:
-    get:
-      summary: Get node status
-      responses:
-        "200":
-          description: Node status
+        '200':
+          description: Statistik Node
           content:
             application/json:
               schema:
@@ -259,8 +167,10 @@ paths:
                   node_id:
                     type: string
                   raft_state:
-                    type: string
-                  locks:
-                    type: integer
+                    type: object
+                  queue_stats:
+                    type: object
                   cache_stats:
+                    type: object
+                  failure_stats:
                     type: object

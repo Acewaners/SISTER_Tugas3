@@ -62,7 +62,7 @@ class FailureDetector:
 
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=2)
 
-            writer.write(json.dumps({"type": "heartbeat", "sender": self.node_id}).encode())
+            writer.write(json.dumps({"type": "fd_heartbeat", "sender": self.node_id}).encode())
             await writer.drain()
             writer.close()
             await writer.wait_closed()

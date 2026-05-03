@@ -10,7 +10,15 @@ from src.nodes.queue_node import DistributedQueue
 from src.nodes.cache_node import CacheNode
 from src.communication.failure_detector import FailureDetector
 from src.communication.message_passing import MessagePassing
+import logging
+from datetime import datetime
 
+# Setup Audit Logger
+audit_logger = logging.getLogger("audit")
+audit_logger.setLevel(logging.INFO)
+file_handler = logging.FileHandler("audit.log")
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+audit_logger.addHandler(file_handler)
 
 class NodeServer:
     def __init__(self, node_id: str, port: int, node_type: str):
@@ -18,9 +26,13 @@ class NodeServer:
         self.port = port
         self.node_type = node_type
 
-        all_ports = [8001, 8002, 8003]
-        peer_ports = [p for p in all_ports if p != port]
-        peer_ids = [f"localhost:{p}" for p in peer_ports]
+        peers_env = os.getenv("PEERS")
+        if peers_env:
+            peer_ids = [p.strip() for p in peers_env.split(",")]
+        else:
+            all_ports = [8001, 8002, 8003]
+            peer_ports = [p for p in all_ports if p != port]
+            peer_ids = [f"127.0.0.1:{p}" for p in peer_ports]
 
         print(f"Initializing {node_id} on port {port}")
         print(f"Peers: {peer_ids}")
@@ -43,9 +55,9 @@ class NodeServer:
         await self.cache.start()
         await self.failure_detector.start()
 
-        server = await asyncio.start_server(self._handle_request, "0.0.0.0", self.port)
+        server = await asyncio.start_server(self._handle_request, "127.0.0.1", self.port)
         print(f"Node {self.node_id} ({self.node_type}) started on port {self.port}")
-        print(f"Ready to accept requests at http://localhost:{self.port}")
+        print(f"Ready to accept requests at http://127.0.0.1:{self.port}")
 
         async with server:
             await server.serve_forever()
@@ -58,6 +70,34 @@ class NodeServer:
             if data:
                 request = json.loads(data.decode())
                 msg_type = request.get("type", "")
+                action = request.get("action", "")
+                token = request.get("token", "")
+                
+                # --- RBAC Security Check ---
+                is_internal_msg = msg_type in ["request_vote", "vote_response", "heartbeat", "append_entries", "fd_heartbeat"]
+                
+                # Verify token for external actions
+                if not is_internal_msg and action:
+                    admin_key = os.getenv("API_KEY_ADMIN", "admin-secret-key-change-this")
+                    producer_key = os.getenv("API_KEY_PRODUCER", "producer-key")
+                    consumer_key = os.getenv("API_KEY_CONSUMER", "consumer-key")
+                    
+                    authorized = False
+                    if token == admin_key:
+                        authorized = True
+                    elif action.startswith("queue_enqueue") and token == producer_key:
+                        authorized = True
+                    elif action.startswith("queue_dequeue") and token == consumer_key:
+                        authorized = True
+                    elif action.startswith("cache_read") and token in [producer_key, consumer_key]:
+                        authorized = True
+                        
+                    if not authorized:
+                        audit_logger.warning(f"UNAUTHORIZED ACCESS from {addr} for action '{action}'")
+                        writer.write(json.dumps({"error": "Unauthorized", "message": "Invalid RBAC token"}).encode())
+                        await writer.drain()
+                        return
+                # ---------------------------
 
                 print(f"[NET] Received from {addr}: type={msg_type}, sender={request.get('sender', 'N/A')}, sender_id={request.get('sender_id', 'N/A')}")
 
@@ -68,8 +108,21 @@ class NodeServer:
                     await writer.drain()
                     return
 
+                # Handle FailureDetector messages
+                if msg_type == "fd_heartbeat":
+                    await self.failure_detector.handle_heartbeat(request.get("sender", ""))
+                    writer.write(json.dumps({"fd_ok": True}).encode())
+                    await writer.drain()
+                    return
+
                 # Handle normal actions
+                audit_logger.info(f"ACTION START: {addr} requested '{action}'")
                 response = await self.process_request(request)
+                
+                # Audit Log Success/Failure
+                status = "SUCCESS" if response.get("success") or "data" in response else "FAILED/INFO"
+                audit_logger.info(f"ACTION END: {addr} '{action}' -> {status}")
+                
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
         except Exception as e:

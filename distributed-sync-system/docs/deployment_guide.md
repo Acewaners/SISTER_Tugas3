@@ -1,156 +1,74 @@
-# Deployment Guide - Distributed Synchronization System
+# Panduan Deployment & Troubleshooting
 
-## Prerequisites
+Panduan ini berisi langkah-langkah untuk melakukan *deployment* dan pemeliharaan Sistem Sinkronisasi Terdistribusi.
 
-- Python 3.8+
-- Docker and Docker Compose
-- Redis (optional, for pub/sub)
+## Prasyarat (Prerequisites)
+- **Python 3.12+**
+- **Docker** dan **Docker Compose**
+- **Git**
 
-## Local Development
+---
 
-### 1. Install Dependencies
+## 1. Deployment Lokal (Native Python)
+Untuk *debugging* dan pengujian manual, Anda bisa menjalankan setiap node secara langsung di komputer Anda menggunakan beberapa jendela terminal.
 
+### Instalasi
 ```bash
+git clone <repository_url>
+cd distributed-sync-system
 pip install -r requirements.txt
 ```
 
-### 2. Run Without Docker
+### Menjalankan Kluster
+Buka tiga jendela terminal secara terpisah dan jalankan perintah berikut:
+- **Terminal 1:** `python -m src.nodes.__main__ --node-id node_1 --port 8001`
+- **Terminal 2:** `python -m src.nodes.__main__ --node-id node_2 --port 8002`
+- **Terminal 3:** `python -m src.nodes.__main__ --node-id node_3 --port 8003`
 
+### Menjalankan Rangkaian Tes (Test Suite)
+Buka terminal ke-4 dan jalankan urutan tes otomatis dengan jeda *step-by-step*:
 ```bash
-# Terminal 1 - Node 1
-python -m src.nodes --node-id node_1 --port 8001
-
-# Terminal 2 - Node 2
-python -m src.nodes --node-id node_2 --port 8002
-
-# Terminal 3 - Node 3
-python -m src.nodes --node-id node_3 --port 8003
+python test_sequence.py
 ```
 
-## Docker Deployment
+---
 
-### Build Images
+## 2. Containerized Deployment (Menggunakan Docker)
+Untuk menyerupai lingkungan *Production*, sistem ini sepenuhnya sudah di-containerize.
 
+### Menjalankan Kluster
+Masuk ke direktori `docker/` dan jalankan perintah ini:
 ```bash
-cd distributed-sync-system
-docker-compose build
+cd docker
+docker-compose up --build
 ```
+Perintah ini akan secara otomatis mem-*build* image dari `Dockerfile.node`, menyalakan 3 container yang saling terhubung, dan menyuntikkan (inject) variabel `PEERS` untuk memastikan jaringan virtual berjalan dinamis.
 
-### Start Cluster
-
-```bash
-docker-compose up -d
-```
-
-### Check Logs
-
-```bash
-docker-compose logs -f
-```
-
-### Scale Nodes
-
-```bash
-docker-compose up -d --scale node-1=2 --scale node-2=2 --scale node-3=2
-```
-
-### Stop Cluster
-
+### Mematikan Kluster
 ```bash
 docker-compose down
 ```
 
-## Configuration
+---
 
-Edit `.env` file or set environment variables:
+## 3. Konfigurasi (`.env`)
+Perilaku sistem bisa diubah dan dikonfigurasi melalui file `.env`. Variabel-variabel penting di antaranya:
+- `ELECTION_TIMEOUT_MIN` & `ELECTION_TIMEOUT_MAX`: Mengatur seberapa cepat pemilihan Leader Raft dilakukan.
+- `VIRTUAL_NODES`: Menentukan jumlah cincin virtual per node fisik untuk algoritma *Consistent Hashing* (default: 150).
+- `CACHE_MAX_SIZE`: Ambang batas sebelum cache lama dihapus oleh kebijakan *LRU*.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| NODE_ID | node_1 | Node identifier |
-| NODE_PORT | 8001 | TCP port |
-| NODE_COUNT | 3 | Number of nodes |
-| REDIS_HOST | localhost | Redis host |
-| ELECTION_TIMEOUT_MIN | 150 | Min election timeout (ms) |
-| ELECTION_TIMEOUT_MAX | 300 | Max election timeout (ms) |
-| HEARTBEAT_INTERVAL | 50 | Heartbeat interval (ms) |
-| LOCK_DEFAULT_TTL | 30 | Default lock TTL (seconds) |
-| CACHE_MAX_SIZE | 1000 | Max cache entries |
-| VIRTUAL_NODES | 150 | Consistent hash virtual nodes |
+---
 
-## Testing
+## 4. Troubleshooting (Penyelesaian Masalah) & Kendala Umum
 
-### Unit Tests
+### Kendala: Terjebak di status "WON ELECTION" tiada henti (Split Vote / Failover loop)
+- **Penyebab:** Ada masalah jaringan yang menghalangi respons voting, atau tabrakan pesan *heartbeat* antar komponen.
+- **Solusi:** Pastikan Anda menggunakan `127.0.0.1` saat di lokal daripada `localhost` untuk menghindari error resolusi IPv6 (`::1`) di Windows. Jika menggunakan Docker, pastikan variabel `PEERS` sudah disetel dengan format IP:Port yang benar di `docker-compose.yml`.
 
-```bash
-pytest tests/unit/
-```
+### Kendala: Error "Address already in use"
+- **Penyebab:** Proses Python sebelumnya belum ditutup secara sempurna, atau port 8001/8002/8003 masih terpakai oleh aplikasi lain.
+- **Solusi:** Matikan (Kill) proses Python yang masih tersangkut (zombie) atau *restart* container Docker (`docker-compose restart`).
 
-### Integration Tests
-
-```bash
-pytest tests/integration/
-```
-
-### Performance Tests
-
-```bash
-pytest tests/performance/
-locust -f benchmarks/load_test_scenarios.py
-```
-
-## Troubleshooting
-
-### Node not starting
-
-Check if port is already in use:
-```bash
-netstat -an | grep 8001
-```
-
-### Leader election issues
-
-Check network connectivity between nodes:
-```bash
-docker-compose exec node-1 ping node-2
-```
-
-### Lock timeout
-
-Increase lock TTL or check for deadlocks in the system.
-
-### Cache miss rate high
-
-Check cache size configuration and eviction policy.
-
-## Monitoring
-
-Access metrics via API:
-```bash
-curl http://localhost:8001/status
-```
-
-## API Examples
-
-### Acquire Lock
-
-```bash
-curl -X POST http://localhost:8001/lock/acquire \
-  -H "Content-Type: application/json" \
-  -d '{"resource": "file1", "lock_type": "EXCLUSIVE", "client_id": "client1"}'
-```
-
-### Enqueue Message
-
-```bash
-curl -X POST http://localhost:8001/queue/enqueue \
-  -H "Content-Type: application/json" \
-  -d '{"topic": "orders", "payload": "order_data", "producer_id": "producer1"}'
-```
-
-### Cache Write
-
-```bash
-curl -X POST http://localhost:8001/cache/write \
-  -H "Content-Type: application/json" \
-  -d '{"address": 100, "data": "value", "writer_id": "writer1"}'
-```
+### Kendala: Terjadi Deadlock di log
+- **Penyebab:** Jaringan terputus (Network partition) atau beberapa *client* meminta akses *EXCLUSIVE* pada waktu yang bersamaan persis.
+- **Solusi:** *Lock Manager* sudah dilengkapi sistem auto-expired (`LOCK_DEFAULT_TTL=30`). Cukup tunggu selama 30 detik agar kunci yang tersangkut dilepas secara otomatis.

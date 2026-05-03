@@ -44,41 +44,70 @@ class DistributedLockManager:
     async def stop(self):
         self._running = False
 
-    async def acquire_lock(self, resource_id: str, lock_type: LockType, client_id: str, 
+    async def acquire_lock(self, resource_id: str, lock_type: LockType, client_id: str,
                           timeout: int = 30) -> Dict:
         request_id = str(uuid.uuid4())
         start_time = time.time()
-        
+
         async with self._lock:
-            if resource_id in self.locks:
-                existing = self.locks[resource_id]
-                if lock_type == LockType.SHARED and existing.lock_type == LockType.SHARED:
-                    if resource_id not in self.shared_locks:
-                        self.shared_locks[resource_id] = set()
-                    self.shared_locks[resource_id].add(client_id)
-                    return {"success": True, "request_id": request_id, "resource": resource_id}
-                
-                if existing.holder_id == client_id and lock_type == LockType.EXCLUSIVE:
-                    self.locks[resource_id] = Lock(resource_id, lock_type, client_id, request_id, time.time(), timeout)
-                    return {"success": True, "request_id": request_id, "resource": resource_id}
-                
-                if resource_id not in self.waiting_queue:
-                    self.waiting_queue[resource_id] = []
-                self.waiting_queue[resource_id].append({"client_id": client_id, "lock_type": lock_type, "request_id": request_id})
-                
-                await asyncio.sleep(0.1)
-                while time.time() - start_time < timeout:
-                    if resource_id not in self.locks or self.locks[resource_id].holder_id == client_id:
-                        break
-                    await asyncio.sleep(0.1)
-                
-                if resource_id not in self.locks:
-                    self.locks[resource_id] = Lock(resource_id, lock_type, client_id, request_id, time.time(), timeout)
-                    return {"success": True, "request_id": request_id, "resource": resource_id}
-                return {"success": False, "error": "timeout", "request_id": request_id}
-            else:
+            if resource_id not in self.locks:
+                # No existing lock — acquire immediately
                 self.locks[resource_id] = Lock(resource_id, lock_type, client_id, request_id, time.time(), timeout)
                 return {"success": True, "request_id": request_id, "resource": resource_id}
+
+            existing = self.locks[resource_id]
+
+            # Shared-on-shared: multiple readers allowed
+            if lock_type == LockType.SHARED and existing.lock_type == LockType.SHARED:
+                if resource_id not in self.shared_locks:
+                    self.shared_locks[resource_id] = set()
+                self.shared_locks[resource_id].add(client_id)
+                return {"success": True, "request_id": request_id, "resource": resource_id}
+
+            # Same client upgrading to exclusive
+            if existing.holder_id == client_id and lock_type == LockType.EXCLUSIVE:
+                self.locks[resource_id] = Lock(resource_id, lock_type, client_id, request_id, time.time(), timeout)
+                return {"success": True, "request_id": request_id, "resource": resource_id}
+
+            # Lock is held by someone else — enqueue and wait WITHOUT holding self._lock
+            if resource_id not in self.waiting_queue:
+                self.waiting_queue[resource_id] = []
+            self.waiting_queue[resource_id].append(
+                {"client_id": client_id, "lock_type": lock_type, "request_id": request_id}
+            )
+
+        # ---- Wait loop OUTSIDE the lock so other coroutines can release ----
+        deadline = start_time + timeout
+        while time.time() < deadline:
+            await asyncio.sleep(0.05)
+            async with self._lock:
+                if resource_id not in self.locks:
+                    # Lock was released; _process_waiting may have given it to us
+                    current = self.locks.get(resource_id)
+                    if current is None:
+                        self.locks[resource_id] = Lock(
+                            resource_id, lock_type, client_id, request_id, time.time(), timeout
+                        )
+                        # Remove from waiting queue if still present
+                        if resource_id in self.waiting_queue:
+                            self.waiting_queue[resource_id] = [
+                                w for w in self.waiting_queue[resource_id]
+                                if w["request_id"] != request_id
+                            ]
+                        return {"success": True, "request_id": request_id, "resource": resource_id}
+                else:
+                    current = self.locks[resource_id]
+                    if current.holder_id == client_id:
+                        return {"success": True, "request_id": request_id, "resource": resource_id}
+
+        # Timeout — remove from waiting queue
+        async with self._lock:
+            if resource_id in self.waiting_queue:
+                self.waiting_queue[resource_id] = [
+                    w for w in self.waiting_queue[resource_id]
+                    if w["request_id"] != request_id
+                ]
+        return {"success": False, "error": "timeout", "request_id": request_id}
 
     async def release_lock(self, resource_id: str, client_id: str) -> Dict:
         async with self._lock:

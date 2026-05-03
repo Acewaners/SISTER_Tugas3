@@ -41,7 +41,7 @@ class RaftNode:
         self.log: List[LogEntry] = []
         self.commit_index = 0
         self.last_heartbeat = time.time()
-        self.election_timeout = random.uniform(3.0, 5.0)
+        self._randomize_timeout()
         self.heartbeat_interval = 1.0
         self.votes_received: List[str] = []
         self.match_index: Dict[str, int] = {}
@@ -59,6 +59,9 @@ class RaftNode:
     async def stop(self):
         self._running = False
 
+    def _randomize_timeout(self):
+        self.election_timeout = random.uniform(3.0, 6.0)
+
     async def _election_loop(self):
         while self._running:
             await asyncio.sleep(0.5)
@@ -66,14 +69,10 @@ class RaftNode:
                 break
 
             elapsed = time.time() - self.last_heartbeat
-            time_since_election = time.time() - self._last_election_time
-
-            if time_since_election < 4.0:
-                continue
 
             if self.state != RaftState.LEADER and elapsed > self.election_timeout:
                 print(f"[RAFT] {self.node_id}: Election timeout ({elapsed:.1f}s)")
-                self._last_election_time = time.time()
+                self._randomize_timeout()
                 await self._start_election()
 
     async def _start_election(self):
@@ -97,13 +96,13 @@ class RaftNode:
             print(f"[RAFT] {self.node_id}: Connecting to {peer}:{port}...")
 
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection('localhost', port), timeout=2
+                asyncio.open_connection('127.0.0.1', port), timeout=2
             )
             print(f"[RAFT] {self.node_id}: Connected! Sending vote request...")
 
             msg = {
                 'type': 'request_vote',
-                'sender': f'localhost:{self.port}',
+                'sender': f'127.0.0.1:{self.port}',
                 'sender_id': self.node_id,
                 'term': self.current_term,
                 'data': {
@@ -134,12 +133,12 @@ class RaftNode:
         try:
             port = int(peer.split(':')[1]) if ':' in peer else 8000
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection('localhost', port), timeout=2
+                asyncio.open_connection('127.0.0.1', port), timeout=2
             )
 
             msg = {
                 'type': 'heartbeat',
-                'sender': f'localhost:{self.port}',
+                'sender': f'127.0.0.1:{self.port}',
                 'sender_id': self.node_id,
                 'term': self.current_term,
                 'data': {'leader_commit': self.commit_index}
@@ -160,6 +159,8 @@ class RaftNode:
                 if self.state == RaftState.LEADER:
                     print(f"[RAFT] {self.node_id}: Higher term received, stepping down")
                 self.state = RaftState.FOLLOWER
+                # Per Raft §5.1: entering a new term resets voted_for
+                self.voted_for = None
 
             msg_type = msg.get('type', '')
 
@@ -172,6 +173,7 @@ class RaftNode:
 
     async def _handle_vote_request(self, msg: Dict):
         self.last_heartbeat = time.time()
+        self._randomize_timeout()
 
         candidate_id = msg.get('data', {}).get('candidate_id', '')
         sender_addr = msg.get('sender', '')
@@ -186,26 +188,32 @@ class RaftNode:
 
         log_ok = (cand_last_term > last_term) or (cand_last_term == last_term and cand_last_idx >= last_idx)
 
-        if candidate_term >= self.current_term and log_ok:
-            if self.voted_for is None or self.voted_for == candidate_id:
-                self.voted_for = candidate_id
-                self.current_term = candidate_term
-                print(f"[RAFT] {self.node_id}: Granted vote to {candidate_id}")
-                await self._send_vote_response(sender_addr, True)
+        # Grant vote only if candidate's term is strictly greater OR same term but we haven't voted yet
+        term_ok = (candidate_term > self.current_term) or (
+            candidate_term == self.current_term and (self.voted_for is None or self.voted_for == candidate_id)
+        )
+
+        if term_ok and log_ok:
+            self.voted_for = candidate_id
+            self.current_term = candidate_term
+            print(f"[RAFT] {self.node_id}: Granted vote to {candidate_id}")
+            asyncio.create_task(self._send_vote_response(sender_addr, True))
+        else:
+            asyncio.create_task(self._send_vote_response(sender_addr, False))
 
     async def _send_vote_response(self, receiver: str, granted: bool):
         try:
             if not receiver:
                 return
-            # receiver should be like "localhost:8001"
+            # receiver should be like "127.0.0.1:8001"
             port = int(receiver.split(':')[1]) if ':' in receiver else 8000
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection('localhost', port), timeout=2
+                asyncio.open_connection('127.0.0.1', port), timeout=2
             )
 
             msg = {
                 'type': 'vote_response',
-                'sender': f'localhost:{self.port}',
+                'sender': f'127.0.0.1:{self.port}',
                 'sender_id': self.node_id,
                 'term': self.current_term,
                 'granted': granted
@@ -219,6 +227,7 @@ class RaftNode:
 
     async def _handle_vote_response(self, msg: Dict):
         self.last_heartbeat = time.time()
+        self._randomize_timeout()
 
         granted = msg.get('granted', False)
         sender_id = msg.get('sender_id', '')
@@ -235,9 +244,11 @@ class RaftNode:
         if self.state != RaftState.CANDIDATE:
             return
 
-        majority = (len(self.peers) + 2) // 2
+        # Total cluster size = peers + self; majority = floor(total/2) + 1
+        total_nodes = len(self.peers) + 1
+        majority = (total_nodes // 2) + 1
 
-        print(f"[RAFT] {self.node_id}: Votes={len(self.votes_received)}, need={majority}")
+        print(f"[RAFT] {self.node_id}: Votes={len(self.votes_received)}/{total_nodes}, need={majority}")
 
         if len(self.votes_received) >= majority:
             print(f"[RAFT] {self.node_id}: WON ELECTION!")
@@ -251,13 +262,15 @@ class RaftNode:
 
     async def _handle_heartbeat(self, msg: Dict):
         self.last_heartbeat = time.time()
+        self._randomize_timeout()
 
         if self.state == RaftState.CANDIDATE:
             print(f"[RAFT] {self.node_id}: Received heartbeat, becoming follower")
 
         self.state = RaftState.FOLLOWER
-        self.voted_for = None
-        # Handle both sender and sender_id for compatibility
+        # NOTE: Do NOT reset voted_for here. The Raft spec requires voted_for to
+        # persist for the current term so a node cannot vote for two candidates.
+        # voted_for is only cleared when the term advances.
         self.leader_id = msg.get('sender_id', msg.get('sender', ''))
 
     async def submit_command(self, command: str, data: Dict = None) -> bool:

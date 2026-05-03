@@ -19,15 +19,15 @@ services:
       - "8001:8001"
     environment:
       - NODE_ID=node_1
-      - NODE_HOST=0.0.0.0
       - NODE_PORT=8001
-      - NODE_COUNT=3
+      - NODE_TYPE=lock_manager
+      - PEERS=node-2:8002,node-3:8003
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       redis:
         condition: service_healthy
-    command: python -c "from src.nodes.lock_manager import DistributedLockManager; import asyncio; lm = DistributedLockManager('node_1', ['localhost:8002', 'localhost:8003'], 8001); asyncio.run(lm.start())"
+    command: ["python", "-m", "src.nodes.__main__", "--node-id", "node_1", "--port", "8001"]
 
   node-2:
     build:
@@ -37,14 +37,15 @@ services:
       - "8002:8002"
     environment:
       - NODE_ID=node_2
-      - NODE_HOST=0.0.0.0
       - NODE_PORT=8002
-      - NODE_COUNT=3
+      - NODE_TYPE=lock_manager
+      - PEERS=node-1:8001,node-3:8003
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       redis:
         condition: service_healthy
+    command: ["python", "-m", "src.nodes.__main__", "--node-id", "node_2", "--port", "8002"]
 
   node-3:
     build:
@@ -54,14 +55,15 @@ services:
       - "8003:8003"
     environment:
       - NODE_ID=node_3
-      - NODE_HOST=0.0.0.0
       - NODE_PORT=8003
-      - NODE_COUNT=3
+      - NODE_TYPE=lock_manager
+      - PEERS=node-1:8001,node-2:8002
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       redis:
         condition: service_healthy
+    command: ["python", "-m", "src.nodes.__main__", "--node-id", "node_3", "--port", "8003"]
 
 networks:
   default:

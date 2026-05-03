@@ -1,13 +1,35 @@
 """
-Sequential Test Script - Semua komponen diuji 1 per 1
-Buka terminal/PowerShell dan jalankan satu per satu
+Distributed Sync System — Sequential Test Suite
+================================================
+Menguji semua komponen satu per satu di terminal.
 
-Usage: python test_sequence.py [test_number]
+Usage:
+  python test_sequence.py          -> jalankan semua 8 test
+  python test_sequence.py 1        -> hanya Test 1 (Raft Consensus)
+  python test_sequence.py 2        -> hanya Test 2 (Lock Manager)
+  python test_sequence.py 3        -> hanya Test 3 (Distributed Queue)
+  python test_sequence.py 4        -> hanya Test 4 (Cache MESI)
+  python test_sequence.py 5        -> hanya Test 5 (Failure Detector)
+  python test_sequence.py 6        -> hanya Test 6 (Multi-Node)
+  python test_sequence.py 7        -> hanya Test 7 (Queue Partitioning)
+  python test_sequence.py 8        -> hanya Test 8 (Cache LRU)
 """
 
 import asyncio
 import sys
 import time
+import builtins
+
+# --- Custom Print Line-by-Line ---
+_original_print = builtins.print
+
+def delayed_print(*args, **kwargs):
+    _original_print(*args, **kwargs)
+    # Efek jeda 0.15 detik setiap kali nge-print sesuatu
+    time.sleep(0.15)
+
+builtins.print = delayed_print
+# ---------------------------------
 
 # Add current directory to path
 sys.path.insert(0, ".")
@@ -18,19 +40,22 @@ from src.nodes.queue_node import DistributedQueue, ConsistentHashRing
 from src.nodes.cache_node import CacheNode, CacheState, LRUReplacement
 from src.communication.failure_detector import FailureDetector
 
+W = 65  # output width
 
 def print_header(title):
-    print("\n" + "="*60)
-    print(f"TEST {title}")
-    print("="*60)
-
+    print("\n" + "=" * W)
+    print(f"  TEST {title}")
+    print("=" * W)
 
 def print_success(msg):
-    print(f"  [OK] {msg}")
-
+    print(f"\n  [PASS] {msg}")
+    print("  " + "-" * (W - 2))
 
 def print_step(msg):
-    print(f"  -> {msg}")
+    print(f"    >> {msg}")
+
+def print_section(msg):
+    print(f"\n  [{msg}]")
 
 
 async def test1_raft_consensus():
@@ -53,43 +78,95 @@ async def test1_raft_consensus():
         state = node.get_state()
         print(f"  - {state['node_id']}: term={state['term']}, state={state['state']}")
 
-    print("\n[3] Simulasi election timeout -> Node 1 mulai election...")
+    print("\n[3] Simulasi election timeout -> Node 1 mulai election (term 1)...")
+    # Manually set candidate state — avoids waiting for election_timeout
     nodes[0].state = RaftState.CANDIDATE
     nodes[0].current_term = 1
-    nodes[0].last_heartbeat = 0  # Trigger election
-    await nodes[0]._start_election()
-    await asyncio.sleep(0.1)
+    nodes[0].voted_for = nodes[0].node_id
+    nodes[0].votes_received = [nodes[0].node_id]
+    nodes[0].last_heartbeat = 0
     print_step(f"Node 1 -> CANDIDATE, term={nodes[0].current_term}")
 
-    print("\n[4] Node 1 becomes Leader:")
-    nodes[0].state = RaftState.LEADER
-    print(f"  - Node 1: state=leader, term={nodes[0].current_term}")
+    print("\n[4] Kirim vote request ke Node 2 dan Node 3 (in-process, no TCP needed)...")
+    vote_request = {
+        'type': 'request_vote',
+        'sender': f'localhost:{nodes[0].port}',
+        'sender_id': nodes[0].node_id,
+        'term': nodes[0].current_term,
+        'data': {
+            'candidate_id': nodes[0].node_id,
+            'last_log_index': 0,
+            'last_log_term': 0,
+        }
+    }
+    # Process vote requests on peers then pipe responses back in-process
+    for peer_node in nodes[1:]:
+        await peer_node.handle_message(vote_request)
+        vote_resp = {
+            'type': 'vote_response',
+            'sender': f'localhost:{peer_node.port}',
+            'sender_id': peer_node.node_id,
+            'term': peer_node.current_term,
+            'granted': (peer_node.voted_for == nodes[0].node_id),
+        }
+        print_step(f"{peer_node.node_id} -> granted={vote_resp['granted']}")
+        await nodes[0].handle_message(vote_resp)
+    await asyncio.sleep(0.1)
 
-    print("\n[5] Leader submit command:")
+    print("\n[5] Verifikasi Leader Election:")
+    print(f"  - Node 1: state={nodes[0].state.value}, term={nodes[0].current_term}")
+    assert nodes[0].state == RaftState.LEADER, \
+        f"Expected LEADER, got {nodes[0].state.value}. Votes={nodes[0].votes_received}"
+    print_step("Node 1 menjadi LEADER!")
+
+    print("\n[6] Leader submit command:")
     success = await nodes[0].submit_command("WRITE", {"key": "balance", "value": 1000})
     print(f"  - Command submitted: {success}")
     print(f"  - Log entries: {len(nodes[0].log)}")
 
-    print("\n[6] Simulasi Leader crash:")
+    print("\n[7] Simulasi Leader crash:")
     crashed_node = nodes[0]
     print_step("Node 1 (leader) crashed!")
     crashed_node._running = False
 
-    print("\n[7] Node 2 & 3 mendeteksi leader hilang, mulai election...")
-    nodes[1].last_heartbeat = 0
+    print("\n[8] Node 2 & 3 mendeteksi leader hilang, mulai election (term 2)...")
+    nodes[1].state = RaftState.CANDIDATE
     nodes[1].current_term = 2
-    await nodes[1]._start_election()
+    nodes[1].voted_for = nodes[1].node_id
+    nodes[1].votes_received = [nodes[1].node_id]
     print_step("Node 2 memulai election dengan term=2")
 
-    nodes[1].state = RaftState.LEADER
-    print_success(f"Node 2 menjadi NEW LEADER (term={nodes[1].current_term})")
+    vote_request2 = {
+        'type': 'request_vote',
+        'sender': f'localhost:{nodes[1].port}',
+        'sender_id': nodes[1].node_id,
+        'term': nodes[1].current_term,
+        'data': {
+            'candidate_id': nodes[1].node_id,
+            'last_log_index': 0,
+            'last_log_term': 0,
+        }
+    }
+    await nodes[2].handle_message(vote_request2)
+    vote_resp2 = {
+        'type': 'vote_response',
+        'sender': f'localhost:{nodes[2].port}',
+        'sender_id': nodes[2].node_id,
+        'term': nodes[2].current_term,
+        'granted': (nodes[2].voted_for == nodes[1].node_id),
+    }
+    await nodes[1].handle_message(vote_resp2)
+    await asyncio.sleep(0.1)
 
-    print("\n[8] Verifikasi failover:")
+    print("\n[9] Verifikasi failover:")
     print(f"  - Node 1 (crashed): leader={crashed_node.is_leader()}")
     print(f"  - Node 2 (new leader): leader={nodes[1].is_leader()}, term={nodes[1].current_term}")
     print(f"  - Node 3 (follower): leader={nodes[2].is_leader()}")
+    assert nodes[1].state == RaftState.LEADER, \
+        f"Expected node_2 LEADER, got {nodes[1].state.value}"
+    print_success("Node 2 menjadi NEW LEADER!")
 
-    print("\n[9] New leader menerima command:")
+    print("\n[10] New leader menerima command:")
     await nodes[1].submit_command("WRITE", {"key": "counter", "value": 1})
     print(f"  - Node 2 log entries: {len(nodes[1].log)}")
 
@@ -258,7 +335,6 @@ async def test5_failure_detector():
         print(f"  - {peer}: is_alive={status['is_alive']}, last_heartbeat={status['last_heartbeat']:.2f}")
 
     print("\n[4] Simulasi node crash (mark peer as dead)...")
-    # Simulate by resetting node status
     peer_to_kill = "localhost:8002"
     fd.peers = [p for p in peers if p != peer_to_kill]
     fd.dead_nodes.add(peer_to_kill)
@@ -443,50 +519,101 @@ async def test8_cache_lru():
 
 
 async def main():
-    print("="*60)
-    print("DISTRIBUTED SYNC SYSTEM - SEQUENTIAL COMPONENT TEST")
-    print("="*60)
-    print("\nMenjalankan 8 test secara berurutan...")
-    print("="*60)
+    print("=" * W)
+    print("  DISTRIBUTED SYNC SYSTEM — Sequential Component Test")
+    print("=" * W)
+    print(f"\n  Menjalankan 8 test secara berurutan...")
+    print("=" * W)
 
     tests = [
-        ("1. Raft Consensus", test1_raft_consensus),
-        ("2. Lock Manager", test2_lock_manager),
-        ("3. Distributed Queue", test3_distributed_queue),
-        ("4. Cache (MESI)", test4_cache_mesi),
-        ("5. Failure Detector", test5_failure_detector),
-        ("6. Multi-Node Scenario", test6_multi_node_scenario),
-        ("7. Queue Partitioning", test7_queue_partitioning),
-        ("8. Cache LRU", test8_cache_lru),
+        ("1. Raft Consensus",       test1_raft_consensus),
+        ("2. Lock Manager",         test2_lock_manager),
+        ("3. Distributed Queue",    test3_distributed_queue),
+        ("4. Cache (MESI)",         test4_cache_mesi),
+        ("5. Failure Detector",     test5_failure_detector),
+        ("6. Multi-Node Scenario",  test6_multi_node_scenario),
+        ("7. Queue Partitioning",   test7_queue_partitioning),
+        ("8. Cache LRU",            test8_cache_lru),
     ]
 
     results = []
     for name, test_func in tests:
+        await asyncio.to_thread(input, f"\n[Tekan Enter untuk menjalankan {name}...] ")
         try:
             success = await test_func()
             results.append((name, True))
         except Exception as e:
-            print(f"\n[ERROR] {name} failed: {e}")
+            print(f"\n  [ERROR] {name} failed: {e}")
+            import traceback
+            traceback.print_exc()
             results.append((name, False))
 
-    # Summary
-    print("\n" + "="*60)
-    print("FINAL SUMMARY")
-    print("="*60)
-
+    # ── Final Summary ──────────────────────────────────────────────────────────
     passed = sum(1 for _, s in results if s)
-    total = len(results)
+    total  = len(results)
 
+    print("\n" + "=" * W)
+    print("  FINAL SUMMARY")
+    print("=" * W)
     for name, success in results:
-        status = "[PASS]" if success else "[FAIL]"
-        print(f"  {status} {name}")
-
-    print("\n" + "-"*60)
-    print(f"Result: {passed}/{total} tests passed")
-    print("-"*60)
+        mark = "PASS" if success else "FAIL"
+        print(f"    [{mark}]  {name}")
+    print("\n" + "-" * W)
+    print(f"  Result : {passed}/{total} tests passed")
+    print("-" * W + "\n")
 
     return passed == total
 
 
+async def run_single(test_num: int):
+    """Run a single test by number (1-8)."""
+    tests = [
+        test1_raft_consensus,
+        test2_lock_manager,
+        test3_distributed_queue,
+        test4_cache_mesi,
+        test5_failure_detector,
+        test6_multi_node_scenario,
+        test7_queue_partitioning,
+        test8_cache_lru,
+    ]
+    names = [
+        "Raft Consensus",
+        "Lock Manager",
+        "Distributed Queue",
+        "Cache (MESI)",
+        "Failure Detector",
+        "Multi-Node Scenario",
+        "Queue Partitioning",
+        "Cache LRU",
+    ]
+    idx = test_num - 1
+    if idx < 0 or idx >= len(tests):
+        print(f"  [ERROR] Test number must be 1–8, got {test_num}")
+        return False
+
+    print("=" * W)
+    print(f"  Running Test {test_num}: {names[idx]}")
+    print("=" * W)
+    
+    await asyncio.to_thread(input, f"\n[Tekan Enter untuk memulai Test {test_num}...] ")
+    
+    try:
+        await tests[idx]()
+        return True
+    except Exception as e:
+        print(f"\n  [ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    if len(sys.argv) > 1:
+        try:
+            num = int(sys.argv[1])
+            asyncio.run(run_single(num))
+        except ValueError:
+            print(f"Usage: python test_sequence.py [1-8]")
+    else:
+        asyncio.run(main())

@@ -1,150 +1,70 @@
-# Distributed Synchronization System - Architecture
+# Sistem Sinkronisasi Terdistribusi - Arsitektur
 
-## Overview
+## 1. Gambaran Umum Sistem
+Sistem Sinkronisasi Terdistribusi adalah platform multi-node yang kuat, dirancang untuk menyediakan primitif terdistribusi esensial: **Manajemen Kunci (Locking) berbasis Konsensus**, **Antrean Pesan Terpartisi (Message Queue)**, **Koherensi Cache**, dan **Deteksi Kegagalan (Failure Detection)**.
 
-This system implements a distributed synchronization mechanism with three main components:
-1. **Distributed Lock Manager** - Based on Raft consensus
-2. **Distributed Queue** - Using consistent hashing
-3. **Cache Coherence** - Implementing MESI protocol with LRU eviction
+Sistem ini berjalan sebagai kluster node peer-to-peer, di mana setiap node menjalankan server Python `asyncio` yang melayani permintaan TCP berbasis JSON.
 
-
-## Diagram Format Mermaid
-flowchart TB
-    Client((Client Request))
-
-    subgraph Docker_Network ["Docker Overlay Network"]
-        direction TB
-
-        subgraph Node_1 ["Node 1 (Leader/Follower)"]
-            direction TB
-            API_1["API Gateway / Base Node"]
-            
-            subgraph Services_1 ["Distributed Services"]
-                LM_1["Lock Manager (Exclusive/Shared)"]
-                QN_1["Queue Node (Consistent Hashing)"]
-                CN_1["Cache Node (MESI Protocol)"]
-            end
-            
-            subgraph Core_1 ["Core Components"]
-                Raft_1["Raft Consensus (Log & State)"]
-                Comm_1["Communication Layer & Failure Detector"]
-            end
-            
-            API_1 --> Services_1
-            Services_1 --> Raft_1
-            Raft_1 --> Comm_1
-        end
-
-        subgraph Node_2 ["Node 2 (Follower)"]
-            Comm_2["Communication Layer"]
-            Raft_2["Raft Consensus"]
-            Services_2["Services: Lock/Queue/Cache"]
-            Comm_2 --- Raft_2 --- Services_2
-        end
-
-        subgraph Node_3 ["Node 3 (Follower)"]
-            Comm_3["Communication Layer"]
-            Raft_3["Raft Consensus"]
-            Services_3["Services: Lock/Queue/Cache"]
-            Comm_3 --- Raft_3 --- Services_3
-        end
+```mermaid
+graph TD
+    Client1[Client] --> |Request TCP| Node1[Node 1 : 8001]
+    Client2[Client] --> |Request TCP| Node2[Node 2 : 8002]
+    
+    subgraph Kluster Terdistribusi
+        Node1 <-->|Heartbeats / TCP| Node2
+        Node2 <-->|Heartbeats / TCP| Node3[Node 3 : 8003]
+        Node3 <-->|Heartbeats / TCP| Node1
     end
+```
 
-    Client -->|HTTP / RPC| API_1
-    Client -->|HTTP / RPC| Node_2
-    Client -->|HTTP / RPC| Node_3
+---
 
-    Comm_1 <==>|"TCP/UDP (Heartbeats)"| Comm_2
-    Comm_2 <==>|"TCP/UDP (Heartbeats)"| Comm_3
-    Comm_3 <==>|"TCP/UDP (Heartbeats)"| Comm_1
+## 2. Komponen Utama
+
+### A. Konsensus Raft & Distributed Lock Manager
+**Tujuan:** Mencegah masalah *split-brain* dan memastikan hak akses eksklusif ke sumber daya (resource) yang tersebar di seluruh kluster.
+- **Pemilihan Leader (Election):** Node menggunakan algoritma Raft untuk memilih satu Leader. Follower memiliki waktu tunggu acak (3.0 detik - 6.0 detik) dan akan memulai pemilihan baru jika tidak menerima sinyal dari Leader.
+- **Replikasi Log:** Semua perubahan status kunci (acquire/release) dirutekan melalui Leader.
+- **Manajemen Kunci (Locking):** Mendukung dua mode kunci: `SHARED` (banyak pembaca) dan `EXCLUSIVE` (satu penulis). Deteksi *deadlock* diimplementasikan menggunakan batas waktu (timeout).
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Leader
+    participant Follower
     
-    %% Styling
-    classDef node fill:#f9f9f9,stroke:#333,stroke-width:2px;
-    classDef core fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
-    classDef service fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
-    
-    class Node_1,Node_2,Node_3 node;
-    class Raft_1,Comm_1,Raft_2,Comm_2,Raft_3,Comm_3 core;
-    class LM_1,QN_1,CN_1,Services_2,Services_3 service;
+    Client->>Leader: lock_acquire (resource_A, EXCLUSIVE)
+    Leader->>Leader: Tambahkan ke Log Lokal
+    Leader->>Follower: AppendEntries (Replikasi Log)
+    Follower-->>Leader: Ack (Konfirmasi)
+    Leader->>Leader: Commit Log & Berikan Kunci
+    Leader-->>Client: Success = True
+```
 
+### B. Distributed Queue (Antrean Terdistribusi - Consistent Hashing)
+**Tujuan:** Mendistribusikan beban pesan secara merata ke seluruh node.
+- **Cincin Consistent Hashing:** Menggunakan mekanisme hash node virtual (150 node virtual per node fisik) untuk memetakan partisi/topik antrean ke node fisik tertentu.
+- **Garansi At-Least-Once Delivery:** Pesan akan tetap berada di dalam antrean sampai konsumen secara eksplisit mengirimkan `ACK` (konfirmasi terima).
+- **Rebalancing:** Jika sebuah node mati (crash), node virtual miliknya akan dihapus dari cincin, dan topik antrean akan dipindahkan dengan mulus ke node terdekat yang tersedia.
 
-## Component Details
+### C. Distributed Cache Coherence (Protokol MESI)
+**Tujuan:** Menjaga konsistensi data saat menyimpan kunci yang identik (cache) di beberapa node sekaligus.
+- **Status MESI:**
+  - **M**odified: Hanya cache ini yang memiliki salinan valid (dirty).
+  - **E**xclusive: Hanya cache ini yang memiliki data tersebut (clean).
+  - **S**hared: Beberapa cache memiliki data yang sama.
+  - **I**nvalid: Data pada cache ini sudah usang (tidak valid).
+- **Kebijakan LRU:** Ketika kapasitas cache mencapai `CACHE_MAX_SIZE` (default 1000), data yang Paling Lama Tidak Digunakan (Least Recently Used) akan dihapus secara otomatis.
 
-### 1. Raft Consensus
+### D. Failure Detector (Protokol SWIM-like)
+**Tujuan:** Mengidentifikasi kerusakan node dan memicu konfigurasi ulang kluster.
+- **Heartbeats:** Ada proses berjalan di latar belakang yang saling menyapa peer node setiap beberapa detik (`fd_heartbeat`).
+- **State Machine:** Status node dilacak sebagai `Alive` (Hidup), `Suspected` (Dicurigai), atau `Dead` (Mati). Jika sebuah node melewatkan beberapa heartbeat berturut-turut, statusnya berubah menjadi dead, lalu memicu pergantian Leader (Failover) dan penyesuaian (Rebalancing) antrean.
 
-The Raft algorithm ensures leader election and log replication across all nodes.
+---
 
-**States:**
-- Follower: Default state, waits for heartbeats
-- Candidate: Initiates election when heartbeat timeout expires
-- Leader: Handles all write requests and sends heartbeats
-
-**Properties:**
-- Strong leader: Writes go through leader
-- Leader append-only: Leader never overwrites or deletes entries
-- Log matching: Logs are consistent across nodes
-
-### 2. Distributed Lock Manager
-
-Implements shared and exclusive locks with deadlock detection.
-
-**Features:**
-- Shared locks: Multiple clients can hold simultaneously
-- Exclusive locks: Only one client can hold
-- Deadlock detection: Waits-for graph to detect cycles
-- Lock expiration: Automatic cleanup of stale locks
-
-### 3. Distributed Queue
-
-Uses consistent hashing for message distribution across nodes.
-
-**Features:**
-- Consistent hashing: Even distribution of messages
-- Partition replication: Messages replicated for fault tolerance
-- At-least-once delivery: Acknowledgment-based delivery
-
-### 4. Cache Coherence (MESI Protocol)
-
-Implements Modified-Exclusive-Shared-Invalid states.
-
-**States:**
-- M (Modified): Cache line modified, exclusive ownership
-- E (Exclusive): Cache line clean, exclusive ownership
-- S (Shared): Cache line potentially shared with other caches
-- I (Invalid): Cache line not valid
-
-**LRU Replacement:**
-- When cache is full, least recently used line is evicted
-- Evicted Modified lines are flushed to main memory
-
-## Communication
-
-Nodes communicate via TCP connections using JSON messages:
-
-**Message Types:**
-- `heartbeat`: Periodic health check
-- `request_vote`: Raft election voting
-- `append_entries`: Raft log replication
-- `lock_request`: Distributed lock operations
-- `queue_message`: Queue operations
-
-## Failure Detection
-
-Nodes monitor each other using heartbeats:
-- Normal heartbeat interval: 50ms
-- Suspected failure after: 2 missed heartbeats
-- Marked dead after: 5 missed heartbeats
-
-## Scalability
-
-The system scales horizontally by adding more nodes:
-1. New node joins consistent hash ring
-2. Raft consensus rebalances
-3. Lock and queue ownership redistributed
-
-## Performance Metrics
-
-- Lock acquisition latency: ~10-50ms
-- Queue enqueue latency: ~5-20ms
-- Cache hit rate target: >80%
-- System throughput: 1000+ ops/sec
+## 3. Teknologi yang Digunakan
+- **Inti Program:** Python 3.12 (Asyncio, Socket)
+- **Containerization:** Docker & Docker Compose
+- **Penyimpanan State:** In-Memory (Simulasi) / Redis (Opsional)
+- **Jaringan:** Protokol TCP JSON Kustom
