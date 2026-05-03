@@ -62,4 +62,7 @@ python visualize_results.py results.json
 
 ## 📹 Video Demonstrasi
 Silakan tonton demonstrasi *live* dari sistem ini di YouTube:
-**[LINK VIDEO YOUTUBE AKAN DITARUH DI SINI]**
+https://youtu.be/3TsRvk_OAMo?si=aZvzEt_2_i1lijSD 
+
+## Report (Antisipasi PDF Tidak Terbuka)
+https://drive.google.com/drive/folders/1iCjJagJ1lPqnew3RU89lGYNkBuKGojO9?usp=sharing

@@ -4,3 +4,15 @@
 2026-05-03 20:06:14,395 - ACTION END: ('127.0.0.1', 56710) 'queue_enqueue' -> SUCCESS
 2026-05-03 20:06:14,402 - ACTION START: ('127.0.0.1', 56713) requested 'get_status'
 2026-05-03 20:06:14,403 - ACTION END: ('127.0.0.1', 56713) 'get_status' -> FAILED/INFO
+2026-05-03 21:45:18,836 - UNAUTHORIZED ACCESS from ('127.0.0.1', 51429) for action 'cache_read'
+2026-05-03 21:45:18,840 - UNAUTHORIZED ACCESS from ('127.0.0.1', 51430) for action 'queue_enqueue'
+2026-05-03 21:45:18,844 - ACTION START: ('127.0.0.1', 51431) requested 'queue_enqueue'
+2026-05-03 21:45:18,845 - ACTION END: ('127.0.0.1', 51431) 'queue_enqueue' -> SUCCESS
+2026-05-03 21:45:18,850 - ACTION START: ('127.0.0.1', 51433) requested 'get_status'
+2026-05-03 21:45:18,850 - ACTION END: ('127.0.0.1', 51433) 'get_status' -> FAILED/INFO
+2026-05-03 21:50:36,179 - UNAUTHORIZED ACCESS from ('127.0.0.1', 50966) for action 'cache_read'
+2026-05-03 21:50:36,182 - UNAUTHORIZED ACCESS from ('127.0.0.1', 50967) for action 'queue_enqueue'
+2026-05-03 21:50:36,184 - ACTION START: ('127.0.0.1', 50968) requested 'queue_enqueue'
+2026-05-03 21:50:36,185 - ACTION END: ('127.0.0.1', 50968) 'queue_enqueue' -> SUCCESS
+2026-05-03 21:50:36,190 - ACTION START: ('127.0.0.1', 50970) requested 'get_status'
+2026-05-03 21:50:36,191 - ACTION END: ('127.0.0.1', 50970) 'get_status' -> FAILED/INFO
