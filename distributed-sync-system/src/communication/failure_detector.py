@@ -17,7 +17,7 @@ class NodeStatus:
 
 
 class FailureDetector:
-    def __init__(self, node_id: str, peers: List[str], heartbeat_interval: float = 5.0, timeout: float = 15.0):
+    def __init__(self, node_id: str, peers: List[str], heartbeat_interval: float = 10.0, timeout: float = 60.0):
         self.node_id = node_id
         self.peers = peers
         self.heartbeat_interval = heartbeat_interval
@@ -30,6 +30,7 @@ class FailureDetector:
         self._running = False
         self._lock = asyncio.Lock()
 
+        # Initialize all peers as alive
         for peer in peers:
             self.node_status[peer] = NodeStatus(peer, True, time.time())
 
@@ -40,7 +41,6 @@ class FailureDetector:
 
         self._running = True
         asyncio.create_task(self._heartbeat_sender())
-        asyncio.create_task(self._failure_checker())
         logger.info(f"FailureDetector started for {self.node_id} with peers: {self.peers}")
 
     async def stop(self):
@@ -68,8 +68,8 @@ class FailureDetector:
             await writer.wait_closed()
 
             await self._mark_alive(peer)
-        except Exception as e:
-            await self._mark_potential_failure(peer)
+        except:
+            pass  # Silently ignore heartbeat failures
 
     async def _mark_alive(self, peer: str):
         async with self._lock:
@@ -77,41 +77,10 @@ class FailureDetector:
                 self.node_status[peer].is_alive = True
                 self.node_status[peer].last_heartbeat = time.time()
                 self.node_status[peer].consecutive_failures = 0
+                # Clear suspected/dead when alive
                 self.node_status[peer].is_suspected = False
                 self.suspected_nodes.discard(peer)
                 self.dead_nodes.discard(peer)
-
-    async def _mark_potential_failure(self, peer: str):
-        async with self._lock:
-            if peer not in self.node_status:
-                return
-
-            self.node_status[peer].consecutive_failures += 1
-
-            if self.node_status[peer].consecutive_failures >= 2:
-                if peer not in self.suspected_nodes:
-                    self.suspected_nodes.add(peer)
-                    logger.warning(f"Node {peer} suspected to be failed (failures: {self.node_status[peer].consecutive_failures})")
-
-    async def _failure_checker(self):
-        while self._running:
-            await asyncio.sleep(self.heartbeat_interval)
-            async with self._lock:
-                now = time.time()
-                for peer, status in list(self.node_status.items()):
-                    time_since_heartbeat = now - status.last_heartbeat
-
-                    if time_since_heartbeat > self.timeout:
-                        if not status.is_suspected:
-                            status.is_suspected = True
-                            self.suspected_nodes.add(peer)
-                            logger.warning(f"Node {peer} marked as suspected (last heartbeat: {time_since_heartbeat:.1f}s ago)")
-
-                        if time_since_heartbeat > self.timeout * 2:
-                            if status.is_alive:
-                                status.is_alive = False
-                                self.dead_nodes.add(peer)
-                                logger.error(f"Node {peer} marked as dead (last heartbeat: {time_since_heartbeat:.1f}s ago)")
 
     def is_alive(self, node_id: str) -> bool:
         status = self.node_status.get(node_id)
@@ -135,7 +104,6 @@ class FailureDetector:
             peer: {
                 "is_alive": status.is_alive,
                 "last_heartbeat": status.last_heartbeat,
-                "consecutive_failures": status.consecutive_failures,
                 "is_suspected": status.is_suspected
             }
             for peer, status in self.node_status.items()
