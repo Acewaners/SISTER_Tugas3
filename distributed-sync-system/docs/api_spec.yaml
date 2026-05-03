@@ -1,0 +1,266 @@
+openapi: 3.0.0
+info:
+  title: Distributed Synchronization System API
+  version: 1.0.0
+  description: API for distributed lock, queue, and cache management
+
+servers:
+  - url: http://localhost:8001
+    description: Node 1
+  - url: http://localhost:8002
+    description: Node 2
+  - url: http://localhost:8003
+    description: Node 3
+
+paths:
+  /lock/acquire:
+    post:
+      summary: Acquire a distributed lock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resource:
+                  type: string
+                  description: Resource identifier to lock
+                lock_type:
+                  type: string
+                  enum: [SHARED, EXCLUSIVE]
+                  default: EXCLUSIVE
+                client_id:
+                  type: string
+                  description: Client identifier
+                timeout:
+                  type: integer
+                  default: 30
+                  description: Timeout in seconds
+      responses:
+        "200":
+          description: Lock acquired successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  request_id:
+                    type: string
+                  resource:
+                    type: string
+
+  /lock/release:
+    post:
+      summary: Release a distributed lock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resource:
+                  type: string
+                client_id:
+                  type: string
+      responses:
+        "200":
+          description: Lock released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /lock/status:
+    get:
+      summary: Get lock status
+      parameters:
+        - name: resource
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lock status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resource:
+                    type: string
+                  locked:
+                    type: boolean
+                  lock_type:
+                    type: string
+                  holder:
+                    type: string
+
+  /queue/enqueue:
+    post:
+      summary: Enqueue a message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                topic:
+                  type: string
+                payload:
+                  type: string
+                producer_id:
+                  type: string
+      responses:
+        "200":
+          description: Message enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  msg_id:
+                    type: string
+                  partition:
+                    type: string
+
+  /queue/dequeue:
+    post:
+      summary: Dequeue a message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                topic:
+                  type: string
+                consumer_id:
+                  type: string
+                timeout:
+                  type: integer
+                  default: 30
+      responses:
+        "200":
+          description: Message dequeued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  msg_id:
+                    type: string
+                  payload:
+                    type: string
+                  timestamp:
+                    type: number
+
+  /queue/ack:
+    post:
+      summary: Acknowledge message processing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                msg_id:
+                  type: string
+                consumer_id:
+                  type: string
+      responses:
+        "200":
+          description: Message acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /cache/read:
+    post:
+      summary: Read from cache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                address:
+                  type: integer
+                requestor_id:
+                  type: string
+      responses:
+        "200":
+          description: Cache read result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address:
+                    type: integer
+                  data:
+                    type: string
+
+  /cache/write:
+    post:
+      summary: Write to cache
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                address:
+                  type: integer
+                data:
+                  type: string
+                writer_id:
+                  type: string
+      responses:
+        "200":
+          description: Cache write result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /status:
+    get:
+      summary: Get node status
+      responses:
+        "200":
+          description: Node status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node_id:
+                    type: string
+                  raft_state:
+                    type: string
+                  locks:
+                    type: integer
+                  cache_stats:
+                    type: object

@@ -1,0 +1,110 @@
+# ===========================================
+# FILES FOR AI INSTRUCTIONS (NOT FOR GITHUB)
+# ===========================================
+# These files contain AI instructions and should not be committed
+plan.md
+report_template.md
+ai_instructions.md
+instructions.md
+todo.md
+progress.md
+
+# ===========================================
+# GENERATED/TEMPORARY TEST FILES
+# ===========================================
+# Files created during local testing
+test_client.py
+ascii_visualization.py
+visualize_results.py
+benchmark_results.json
+benchmark_results.csv
+load_test_output.txt
+test_output.txt
+*.log
+
+# ===========================================
+# PYTHON
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+
+# ===========================================
+# TESTING & COVERAGE
+# ===========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+coverage.xml
+*.cover
+.cache
+
+# ===========================================
+# IDE & EDITOR
+# ===========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===========================================
+# ENVIRONMENT & SECRETS
+# ===========================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# ===========================================
+# DOCKER
+# ===========================================
+.dockerignore
+
+# ===========================================
+# DOCUMENTATION BUILD
+# ===========================================
+site/
+_build/
+*.html
+*.pdf
+report_*.pdf
+
+# ===========================================
+# MISC
+# ===========================================
+*.bak
+*.tmp
+*.temp
+*.swp
+.~*
