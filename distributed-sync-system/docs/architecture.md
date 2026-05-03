@@ -7,31 +7,66 @@ This system implements a distributed synchronization mechanism with three main c
 2. **Distributed Queue** - Using consistent hashing
 3. **Cache Coherence** - Implementing MESI protocol with LRU eviction
 
-## System Architecture
 
-```
-+-------------------+     +-------------------+     +-------------------+
-|    Node 1         |     |    Node 2         |     |    Node 3         |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-| | Raft Node     | |     | | Raft Node     | |     | | Raft Node     | |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-| | Lock Manager  | |     | | Lock Manager  | |     | | Lock Manager  | |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-| | Queue System  | |     | | Queue System  | |     | | Queue System  | |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-| | Cache (MESI)  | |     | | Cache (MESI)  | |     | | Cache (MESI)  | |
-| +---------------+ |     | +---------------+ |     | +---------------+ |
-+-------------------+     +-------------------+     +-------------------+
-         |                       |                       |
-         +-----------------------+-----------------------+
-                                 |
-                         +-------v-------+
-                         |  Redis (Pub/Sub) |
-                         +-----------------+
-```
+## Diagram Format Mermaid
+flowchart TB
+    Client((Client Request))
+
+    subgraph Docker_Network ["Docker Overlay Network"]
+        direction TB
+
+        subgraph Node_1 ["Node 1 (Leader/Follower)"]
+            direction TB
+            API_1["API Gateway / Base Node"]
+            
+            subgraph Services_1 ["Distributed Services"]
+                LM_1["Lock Manager (Exclusive/Shared)"]
+                QN_1["Queue Node (Consistent Hashing)"]
+                CN_1["Cache Node (MESI Protocol)"]
+            end
+            
+            subgraph Core_1 ["Core Components"]
+                Raft_1["Raft Consensus (Log & State)"]
+                Comm_1["Communication Layer & Failure Detector"]
+            end
+            
+            API_1 --> Services_1
+            Services_1 --> Raft_1
+            Raft_1 --> Comm_1
+        end
+
+        subgraph Node_2 ["Node 2 (Follower)"]
+            Comm_2["Communication Layer"]
+            Raft_2["Raft Consensus"]
+            Services_2["Services: Lock/Queue/Cache"]
+            Comm_2 --- Raft_2 --- Services_2
+        end
+
+        subgraph Node_3 ["Node 3 (Follower)"]
+            Comm_3["Communication Layer"]
+            Raft_3["Raft Consensus"]
+            Services_3["Services: Lock/Queue/Cache"]
+            Comm_3 --- Raft_3 --- Services_3
+        end
+    end
+
+    Client -->|HTTP / RPC| API_1
+    Client -->|HTTP / RPC| Node_2
+    Client -->|HTTP / RPC| Node_3
+
+    Comm_1 <==>|"TCP/UDP (Heartbeats)"| Comm_2
+    Comm_2 <==>|"TCP/UDP (Heartbeats)"| Comm_3
+    Comm_3 <==>|"TCP/UDP (Heartbeats)"| Comm_1
+    
+    %% Styling
+    classDef node fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    classDef core fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef service fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    
+    class Node_1,Node_2,Node_3 node;
+    class Raft_1,Comm_1,Raft_2,Comm_2,Raft_3,Comm_3 core;
+    class LM_1,QN_1,CN_1,Services_2,Services_3 service;
+
 
 ## Component Details
 
