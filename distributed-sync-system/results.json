@@ -2,26 +2,26 @@
     "benchmark_results": [
         {
             "name": "Lock Manager (Raft)",
-            "throughput_ops_per_sec": 451.28000000000003,
-            "avg_latency_ms": 79.92930377212278,
-            "max_latency_ms": 277.08825307669235,
-            "success_count": 5641,
-            "error_count": 112
+            "throughput_ops_per_sec": 465.12,
+            "avg_latency_ms": 77.60924925129972,
+            "max_latency_ms": 269.0453974045057,
+            "success_count": 5814,
+            "error_count": 116
         },
         {
             "name": "Queue Pub/Sub",
-            "throughput_ops_per_sec": 1434.6,
-            "avg_latency_ms": 26.22015793569813,
-            "max_latency_ms": 162.5649792013284,
-            "success_count": 9564,
+            "throughput_ops_per_sec": 1472.85,
+            "avg_latency_ms": 25.577689822160345,
+            "max_latency_ms": 158.58167689739415,
+            "success_count": 9819,
             "error_count": 0
         },
         {
             "name": "Cache (MESI)",
-            "throughput_ops_per_sec": 1668.92,
-            "avg_latency_ms": 15.87872003270679,
-            "max_latency_ms": 132.32266693922324,
-            "success_count": 7586,
+            "throughput_ops_per_sec": 1698.18,
+            "avg_latency_ms": 15.613707641752786,
+            "max_latency_ms": 130.1142303479399,
+            "success_count": 7719,
             "error_count": 0
         }
     ]
